@@ -1,3 +1,4 @@
 src/*_convs.rs
 /target
 /Cargo.lock
+/DS_Store
