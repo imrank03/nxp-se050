@@ -1,0 +1,18 @@
+[package]
+name = "se050_info"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+cortex-m = "0.7.6"
+cortex-m-rt = "0.7.2"
+embedded-hal = "0.2.7"
+cortex-m-semihosting = "0.5.0"
+# defmt = {version = "0.3.1", optional = true}
+stm32h7xx-hal = {version = "0.13.1", features = ["stm32h735"]}
+se050 = {path = "../se050"}
+asm-delay = "0.9.0"
+# [features]
+# default = ["defmt"]
