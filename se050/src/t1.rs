@@ -2,7 +2,6 @@ use crate::types::*;
 use core::convert::{Into, TryInto};
 use byteorder::{ByteOrder, LE, BE};
 
-use cortex_m_semihosting::{debug, heprintln, hprint};
 pub struct T1overI2C<TWI>
 where
     TWI: embedded_hal::blocking::i2c::Read + embedded_hal::blocking::i2c::Write,
@@ -15,7 +14,7 @@ where
     iseq_rcv: u8,
 }
 
-const TWI_RETRIES: usize = 5;
+const TWI_RETRIES: usize = 128;
 const TWI_RETRY_DELAY_MS: u32 = 2;
 
 #[allow(unused_variables)]
@@ -45,20 +44,16 @@ where
     }
 
     fn twi_write(&mut self, data: &[u8], delay: &mut DelayWrapper) -> Result<(), T1Error> {
-        hprint!("Enable twi");
         maybe_debug("T1 W", data);
         for _i in 0..TWI_RETRIES {
-            hprint!(" i value {} ", _i);
             let e = self.twi.write(self.se_address as u8, data);
             if e.is_ok() {
                 trace!("t1w ok({})", i);
                 return Ok(());
             }
-             hprint!(" i value {} ", _i);
             delay.inner.delay_ms(TWI_RETRY_DELAY_MS);
             // TODO: we should only loop on AddressNack errors
             // but the existing traits don't provide an API for that
-            hprint!(" i value {} ", _i);
         }
         trace!("t1w err");
         Err(T1Error::TransmitError)
@@ -122,7 +117,6 @@ where
         if data.len() > MAX_IFSC {
             return Err(T1Error::BufferOverrunError(data.len()));
         }
-        
 
         let mut buf = heapless::Vec::<u8, MAX_T1_FRAME_SIZE>::new();
         buf.extend_from_slice(&[self.nad_hd2se, pcb.into(), data.len() as u8]).unwrap();

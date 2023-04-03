@@ -10,14 +10,14 @@ pub const MAX_T1_FRAME_SIZE: usize = 3 + MAX_IFSC + 2;
 // 8 TLV payload objects should be enough for every request?
 pub const MAX_TLVS: usize = 8;
 
-pub struct DelayWrapper<'a> {
-    pub inner: &'a  mut dyn DelayMs<u32>,
+pub struct DelayWrapper {
+    pub inner: &'static mut dyn DelayMs<u32>,
 }
-impl<'a, T> From<&'a mut T> for DelayWrapper<'a>
+impl<T> From<&'static mut T> for DelayWrapper
 where
     T: DelayMs<u32>,
 {
-    fn from(delay: &'a mut T) -> Self {
+    fn from(delay: &'static mut T) -> Self {
         Self { inner: delay }
     }
 }
@@ -74,8 +74,9 @@ impl<'a> SimpleTlv<'a> {
     pub fn new(tag: u8, data: &'a [u8]) -> Self {
         let header = if data.len() < 128 {
             heapless::Vec::from_slice(&[tag, data.len() as u8]).unwrap()
-        } else { 
-            heapless::Vec::from_slice(&[tag, 0x82, (data.len() >> 8) as u8, data.len() as u8]).unwrap()
+        } else {
+            heapless::Vec::from_slice(&[tag, 0x82, (data.len() >> 8) as u8, data.len() as u8])
+                .unwrap()
         };
         Self { tag, header, data }
     }
@@ -107,12 +108,7 @@ pub struct RApdu<'a> {
 
 impl<'a> RApdu<'a> {
     pub fn get_tlv(&self, tag: u8) -> Option<&SimpleTlv<'a>> {
-        for tlv in self.tlvs.iter() {
-            if tlv.tag == tag {
-                return Some(tlv);
-            }
-        }
-        None
+        self.tlvs.iter().find(|&tlv| tlv.tag == tag)
     }
 }
 
@@ -180,14 +176,21 @@ impl<'a> CApdu<'a> {
 pub struct CApduByteIterator<'a> {
     // capdu: &'a CApdu<'a>,
     capdu_header: heapless::Vec<u8, 7>,
-    body: heapless::Deque<&'a [u8], {2*MAX_TLVS}>,
+    body: heapless::Deque<&'a [u8], { 2 * MAX_TLVS }>,
     capdu_trailer: heapless::Vec<u8, 3>,
     area: usize,
     off: usize,
 }
 
 impl<'a> CApduByteIterator<'a> {
-    fn from_capdu_common(cla: ApduClass, ins: u8, p1: u8, p2: u8, lc: usize, le: Option<usize>) -> Self {
+    fn from_capdu_common(
+        cla: ApduClass,
+        ins: u8,
+        p1: u8,
+        p2: u8,
+        lc: usize,
+        le: Option<usize>,
+    ) -> Self {
         let is_extended = lc > 255 || le.map_or(false, |le| le > 255);
 
         let mut obj = Self {
@@ -196,21 +199,23 @@ impl<'a> CApduByteIterator<'a> {
             body: heapless::Deque::new(),
             capdu_trailer: heapless::Vec::new(),
             area: 0,
-            off: 0
+            off: 0,
         };
-
-
 
         if lc > 0 {
             if is_extended {
-                obj.capdu_header.extend_from_slice(&[0x00, (lc >> 8) as u8, lc as u8]).unwrap();
+                obj.capdu_header
+                    .extend_from_slice(&[0x00, (lc >> 8) as u8, lc as u8])
+                    .unwrap();
             } else {
                 obj.capdu_header.push(lc as u8).unwrap();
             }
         }
         if let Some(le) = le {
             if is_extended {
-                obj.capdu_trailer.extend_from_slice(&[0x00, (le >> 8) as u8, le as u8]).unwrap();
+                obj.capdu_trailer
+                    .extend_from_slice(&[0x00, (le >> 8) as u8, le as u8])
+                    .unwrap();
             } else {
                 obj.capdu_trailer.push(le as u8).unwrap();
             }
@@ -220,7 +225,14 @@ impl<'a> CApduByteIterator<'a> {
     }
 
     fn from_capdu(capdu: &'a CApdu<'a>) -> Self {
-        let mut obj = Self::from_capdu_common(capdu.cla, capdu.ins, capdu.p1, capdu.p2, capdu.payload_len, capdu.le);
+        let mut obj = Self::from_capdu_common(
+            capdu.cla,
+            capdu.ins,
+            capdu.p1,
+            capdu.p2,
+            capdu.payload_len,
+            capdu.le,
+        );
 
         for tlv in &capdu.tlvs {
             obj.body.push_back(tlv.header.as_slice()).unwrap();
@@ -231,7 +243,14 @@ impl<'a> CApduByteIterator<'a> {
     }
 
     fn from_capdu_raw(capdu: &'a RawCApdu<'a>) -> Self {
-        let mut obj = Self::from_capdu_common(capdu.cla, capdu.ins, capdu.p1, capdu.p2, capdu.data.len(), capdu.le);
+        let mut obj = Self::from_capdu_common(
+            capdu.cla,
+            capdu.ins,
+            capdu.p1,
+            capdu.p2,
+            capdu.data.len(),
+            capdu.le,
+        );
 
         if !capdu.data.is_empty() {
             obj.body.push_back(capdu.data).unwrap();
@@ -246,42 +265,42 @@ impl<'a> Iterator for CApduByteIterator<'a> {
 
     fn next(&mut self) -> Option<u8> {
         match self.area {
-        0 => {
-            let ret = self.capdu_header[self.off];
-            self.off += 1;
-            if self.off == self.capdu_header.len() {
-                self.area = 1;
-                self.off = 0;
-            }
-            Some(ret)
-        },
-        1 => {
-            let curr = self.body.front().unwrap();
-            let ret = curr[self.off];
-            self.off += 1;
-            if self.off >= curr.len() {
-                self.off = 0;
-                self.body.pop_front();
-                if self.body.front().is_none() {
-                    self.area = 2;
-                }
-            }
-            Some(ret)
-        },
-        2 => {
-            if self.capdu_trailer.len() == 0 {
-                None
-            } else {
-                let ret = self.capdu_trailer[self.off];
+            0 => {
+                let ret = self.capdu_header[self.off];
                 self.off += 1;
-                if self.off == self.capdu_trailer.len() {
-                    self.area = 3;
+                if self.off == self.capdu_header.len() {
+                    self.area = 1;
                     self.off = 0;
                 }
                 Some(ret)
             }
-        },
-        _ => { None }
+            1 => {
+                let curr = self.body.front().unwrap();
+                let ret = curr[self.off];
+                self.off += 1;
+                if self.off >= curr.len() {
+                    self.off = 0;
+                    self.body.pop_front();
+                    if self.body.front().is_none() {
+                        self.area = 2;
+                    }
+                }
+                Some(ret)
+            }
+            2 => {
+                if self.capdu_trailer.is_empty() {
+                    None
+                } else {
+                    let ret = self.capdu_trailer[self.off];
+                    self.off += 1;
+                    if self.off == self.capdu_trailer.len() {
+                        self.area = 3;
+                        self.off = 0;
+                    }
+                    Some(ret)
+                }
+            }
+            _ => None,
         }
     }
 }
@@ -303,9 +322,9 @@ pub struct T1Header {
 
 #[derive(PartialEq, Eq)]
 pub enum T1PCB {
-    I(u8, bool),		// seq, multi
-    S(T1SCode, bool),		// code, response?
-    R(u8, u8),			// seq, err
+    I(u8, bool),      // seq, multi
+    S(T1SCode, bool), // code, response?
+    R(u8, u8),        // seq, err
 }
 
 impl core::convert::TryFrom<u8> for T1PCB {
@@ -328,10 +347,18 @@ impl core::convert::TryFrom<u8> for T1PCB {
 impl core::convert::From<T1PCB> for u8 {
     fn from(value: T1PCB) -> u8 {
         match value {
-        T1PCB::I(seq, multi) => (seq << 6) | { if multi { 0x20 } else { 0 }},
-        T1PCB::R(seq, err) => T1_R_CODE | (seq << 5) | err,
-        T1PCB::S(code, false) => T1_S_REQUEST_CODE | <T1SCode as Into<u8>>::into(code),
-        T1PCB::S(code, true) => T1_S_RESPONSE_CODE | <T1SCode as Into<u8>>::into(code),
+            T1PCB::I(seq, multi) => {
+                (seq << 6) | {
+                    if multi {
+                        0x20
+                    } else {
+                        0
+                    }
+                }
+            }
+            T1PCB::R(seq, err) => T1_R_CODE | (seq << 5) | err,
+            T1PCB::S(code, false) => T1_S_REQUEST_CODE | <T1SCode as Into<u8>>::into(code),
+            T1PCB::S(code, true) => T1_S_RESPONSE_CODE | <T1SCode as Into<u8>>::into(code),
         }
     }
 }
